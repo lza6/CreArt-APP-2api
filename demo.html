@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CreArt 2API — Demo (R1)</title>
+<style>
+  :root { --bg:#0d0f16; --card:#161a26; --line:#2a3248; --txt:#e7eaf3; --mut:#9aa3bd; --accent:#6f8cff; --ok:#3ecf8e; --warn:#ffcf5c; --bad:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, "Segoe UI", Arial; background:var(--bg); color:var(--txt); }
+  header { padding:18px 22px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  .tag { font-size:11px; padding:2px 8px; border-radius:99px; background:#233056; color:#a9bbff; border:1px solid #33477f; }
+  main { max-width:1080px; margin:0 auto; padding:22px; display:grid; grid-template-columns: 380px 1fr; gap:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; }
+  label { font-size:12px; color:var(--mut); display:block; margin:12px 0 6px; }
+  textarea, select { width:100%; background:#0f131e; color:var(--txt); border:1px solid var(--line); border-radius:9px; padding:10px; font-size:14px; resize:vertical; }
+  button { cursor:pointer; border:0; border-radius:9px; padding:12px 14px; font-size:14px; font-weight:600; }
+  .primary { background:var(--accent); color:#fff; width:100%; margin-top:16px; }
+  .primary:disabled { opacity:.6; cursor:wait; }
+  .ghost { background:#1d2436; color:var(--txt); border:1px solid var(--line); width:100%; margin-top:10px; }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; }
+  .modes { display:flex; gap:8px; margin-top:6px; }
+  .mode { flex:1; text-align:center; padding:9px; border:1px solid var(--line); border-radius:9px; cursor:pointer; font-size:13px; }
+  .mode.active { border-color:var(--accent); background:#1b2544; }
+  .stage { min-height:420px; display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:10px; background:#0b0e15; border:1px dashed var(--line); }
+  .stage img { max-width:100%; max-height:520px; border-radius:8px; }
+  .muted { color:var(--mut); font-size:13px; }
+  .badge { display:inline-block; font-size:12px; padding:3px 9px; border-radius:99px; font-weight:600; }
+  .b-mock { background:#3a2f12; color:var(--warn); border:1px solid #6a5a22; }
+  .b-blocked { background:#3a1616; color:var(--bad); border:1px solid #6a2a2a; }
+  .b-image { background:#12321f; color:var(--ok); border:1px solid #2a6a44; }
+  pre { background:#0b0e15; border:1px solid var(--line); border-radius:9px; padding:12px; overflow:auto; font-size:12px; max-height:260px; }
+  .kv { display:flex; justify-content:space-between; border-bottom:1px dashed var(--line); padding:7px 0; font-size:13px; }
+  .kv span:first-child { color:var(--mut); }
+  .stat { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; }
+  .stat b { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>CreArt 2API · Demo</h1>
+  <span class="tag">v2.7.2 逆向 R1</span>
+  <span class="tag" id="modeTag">mode: —</span>
+</header>
+<main>
+  <section class="card">
+    <div class="muted">上游 <code>api.creartai.com</code> · 端点 <code>/api/v2/text2image</code></div>
+    <label>Prompt</label>
+    <textarea id="prompt" rows="3">a majestic lion, vibrant colors, digital art</textarea>
+    <label>Mode</label>
+    <div class="modes">
+      <div class="mode active" data-mode="mock">mock（本地合成，标注 MOCK）</div>
+      <div class="mode" data-mode="upstream">upstream（真后端透传）</div>
+    </div>
+    <label>Aspect Ratio</label>
+    <select id="aspect"><option>1:1</option><option>3:4</option><option>4:3</option><option>9:16</option></select>
+    <button class="primary" id="go">Generate</button>
+    <button class="ghost" id="probeBtn">Probe 上游 / 完整性门禁</button>
+    <div class="stat" id="stat" style="margin-top:16px"></div>
+  </section>
+
+  <section class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <strong id="resTitle">结果</strong>
+      <span id="kindBadge"></span>
+    </div>
+    <div class="stage" id="stage"><span class="muted">点击 Generate</span></div>
+    <div class="kv"><span>耗时</span><span id="latency">—</span></div>
+    <div class="kv"><span>X-Creart-Kind</span><span id="hKind">—</span></div>
+    <div class="kv"><span>X-Creart-Notice</span><span id="hNotice">—</span></div>
+    <div class="kv"><span>Upstream MD5</span><span id="hMd5">—</span></div>
+    <details style="margin-top:12px">
+      <summary class="muted" style="cursor:pointer">Probe / 原始响应</summary>
+      <pre id="probeOut">—</pre>
+    </details>
+  </section>
+</main>
+
+<script>
+let MODE = "mock";
+const $ = id => document.getElementById(id);
+
+document.querySelectorAll(".mode").forEach(el => el.onclick = () => {
+  document.querySelectorAll(".mode").forEach(x => x.classList.remove("active"));
+  el.classList.add("active");
+  MODE = el.dataset.mode;
+});
+
+async function refreshStats() {
+  try {
+    const r = await fetch("/stats"); const s = await r.json();
+    $("stat").innerHTML = `<div>total <b>${s.total}</b></div><div>mock <b>${s.mock}</b></div>
+      <div>upstream <b>${s.upstream}</b></div><div>blocked <b>${s.integrity_blocked}</b></div>
+      <div>image <b>${s.image}</b></div><div>err <b>${s.error}</b></div>`;
+  } catch(e) {}
+}
+
+$("go").onclick = async () => {
+  const btn = $("go"); btn.disabled = true; btn.textContent = "生成中…";
+  $("kindBadge").innerHTML = ""; $("stage").innerHTML = '<span class="muted">请求中…</span>';
+  const t0 = performance.now();
+  try {
+    const r = await fetch(`/api/v2/text2image?mode=${MODE}`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({prompt: $("prompt").value, aspect_ratio: $("aspect").value})
+    });
+    const dt = ((performance.now() - t0)/1000).toFixed(2);
+    $("latency").textContent = dt + " s";
+    const kind = r.headers.get("X-Creart-Kind") || "?";
+    $("hKind").textContent = kind;
+    $("hNotice").textContent = r.headers.get("X-Creart-Notice") || "—";
+    $("hMd5").textContent = r.headers.get("X-Creart-Upstream-MD5") || "—";
+    const map = {mock:["b-mock","MOCK（非真实生成）"], integrity_blocked:["b-blocked","完整性门禁拦截"],
+                 image:["b-image","真实 PNG"], other:["b-blocked","其它/错误"]};
+    const [cls,txt] = map[kind] || map.other;
+    $("kindBadge").innerHTML = `<span class="badge ${cls}">${txt}</span>`;
+    const blob = await r.blob();
+    if (r.ok && blob.type.startsWith("image/")) {
+      const url = URL.createObjectURL(blob);
+      $("stage").innerHTML = `<img src="${url}" alt="result">`;
+    } else {
+      $("stage").innerHTML = `<pre>${await blob.text()}</pre>`;
+    }
+  } catch(e) {
+    $("stage").innerHTML = `<span class="badge b-blocked">异常: ${e}</span>`;
+  } finally {
+    btn.disabled = false; btn.textContent = "Generate"; refreshStats();
+  }
+};
+
+$("probeBtn").onclick = async () => {
+  $("probeOut").textContent = "探测中…（会真实请求上游）";
+  try {
+    const r = await fetch("/probe"); const j = await r.json();
+    $("probeOut").textContent = JSON.stringify(j, null, 2);
+    $("resTitle").scrollIntoView({behavior:"smooth"});
+  } catch(e) { $("probeOut").textContent = "探测失败: " + e; }
+};
+
+// init
+(async () => {
+  const h = await (await fetch("/health")).json();
+  $("modeTag").textContent = "server mode: " + h.mode;
+  refreshStats(); setInterval(refreshStats, 3000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# 逆向中间产物，不入库
+apk-unzip/
+__pycache__/
+*.pyc
+server.log
+libapp_strings.txt
+probe.json
+mock_out.png
+*.bin
+.DS_Store
